@@ -1,10 +1,7 @@
-
 import streamlit as st
 import pandas as pd
-import matplotlib.pyplot as plt
 from rdkit import Chem
 from rdkit.Chem import Descriptors, rdMolDescriptors, Draw
-from io import BytesIO
 
 st.set_page_config(
     page_title="MolecuLab",
@@ -14,7 +11,8 @@ st.set_page_config(
 
 MOLECULES = {
     "Ibuprofen": {
-        "smiles": "CC(C)Cc1ccc(cc1)[C@@H](C)C(=O)O",
+        # Ibuprofen is sold as a racemate, so no stereocentre is specified
+        "smiles": "CC(C)Cc1ccc(cc1)C(C)C(=O)O",
         "description": "A nonsteroidal anti-inflammatory drug (NSAID)."
     },
     "Nicotine": {
@@ -27,12 +25,22 @@ MOLECULES = {
     }
 }
 
-def get_molecule(name):
-    mol = Chem.MolFromSmiles(MOLECULES[name]["smiles"])
-    if mol is None:
-        return None
-    return mol
 
+def get_molecule(name):
+    return Chem.MolFromSmiles(MOLECULES[name]["smiles"])
+
+
+def count_all_atoms(mol):
+    """Total atoms including hydrogens (GetNumAtoms() ignores implicit H)."""
+    return Chem.AddHs(mol).GetNumAtoms()
+
+
+def count_all_bonds(mol):
+    """Total bonds including bonds to hydrogens."""
+    return Chem.AddHs(mol).GetNumBonds()
+
+
+@st.cache_data
 def get_properties(name):
     mol = get_molecule(name)
     return {
@@ -44,8 +52,10 @@ def get_properties(name):
         "H-Bond Donors": rdMolDescriptors.CalcNumHBD(mol),
         "H-Bond Acceptors": rdMolDescriptors.CalcNumHBA(mol),
         "Heavy Atoms": mol.GetNumHeavyAtoms(),
-        "Bonds": mol.GetNumBonds()
+        "Total Atoms (with H)": count_all_atoms(mol),
+        "Bonds (with H)": count_all_bonds(mol),
     }
+
 
 st.sidebar.title("🧪 MolecuLab")
 st.sidebar.caption("Interactive Cheminformatics Virtual Laboratory")
@@ -121,36 +131,43 @@ elif page == "Molecular Visualization":
     name = st.selectbox("Select a molecule", list(MOLECULES))
     mol = get_molecule(name)
 
-    st.success(f"{name} loaded successfully.")
-    st.write("**SMILES notation:**", MOLECULES[name]["smiles"])
-    st.write("**Molecular formula:**", rdMolDescriptors.CalcMolFormula(mol))
+    if mol is None:
+        st.error(f"Could not load {name}.")
+    else:
+        st.success(f"{name} loaded successfully.")
+        st.write("**SMILES notation:**", MOLECULES[name]["smiles"])
+        st.write("**Molecular formula:**", rdMolDescriptors.CalcMolFormula(mol))
 
-    image = Draw.MolToImage(mol, size=(600, 400))
-    st.image(image, caption=f"2D structure of {name}")
+        image = Draw.MolToImage(mol, size=(600, 400))
+        st.image(image, caption=f"2D structure of {name}")
 
-    st.caption(
-        "This version displays 2D structures. Interactive 3D visualization "
-        "can be added in a later step."
-    )
+        st.caption(
+            "This version displays 2D structures. Interactive 3D visualization "
+            "can be added in a later step."
+        )
 
-    st.subheader("Structure information")
-    st.write("Heavy atoms:", mol.GetNumHeavyAtoms())
-    st.write("Total atoms:", mol.GetNumAtoms())
-    st.write("Bonds:", mol.GetNumBonds())
+        st.subheader("Structure information")
+        st.write("Heavy atoms:", mol.GetNumHeavyAtoms())
+        st.write("Total atoms (including hydrogens):", count_all_atoms(mol))
+        st.write("Total bonds (including hydrogens):", count_all_bonds(mol))
 
     st.subheader("Enter your own SMILES")
     user_smiles = st.text_input("SMILES notation")
     if st.button("Validate SMILES"):
-        custom_mol = Chem.MolFromSmiles(user_smiles)
-        if custom_mol:
-            st.success("Valid SMILES notation.")
-            st.image(Draw.MolToImage(custom_mol, size=(500, 350)))
-            st.write(
-                "Molecular formula:",
-                rdMolDescriptors.CalcMolFormula(custom_mol)
-            )
+        user_smiles = user_smiles.strip()
+        if not user_smiles:
+            st.warning("Please enter a SMILES string first.")
         else:
-            st.error("Invalid SMILES notation. Please check your input.")
+            custom_mol = Chem.MolFromSmiles(user_smiles)
+            if custom_mol is not None:
+                st.success("Valid SMILES notation.")
+                st.image(Draw.MolToImage(custom_mol, size=(500, 350)))
+                st.write(
+                    "Molecular formula:",
+                    rdMolDescriptors.CalcMolFormula(custom_mol)
+                )
+            else:
+                st.error("Invalid SMILES notation. Please check your input.")
 
 elif page == "Molecular Properties Report":
     st.title("Molecular Properties Report")
@@ -163,9 +180,10 @@ elif page == "Molecular Properties Report":
 
     st.subheader("All three molecules")
     df = pd.DataFrame([get_properties(n) for n in MOLECULES])
-    st.dataframe(df, use_container_width=True)
+    st.dataframe(df, width="stretch")
 
-    csv = df.to_csv(index=False).encode("utf-8")
+    # utf-8-sig so Excel displays characters such as Å² correctly
+    csv = df.to_csv(index=False).encode("utf-8-sig")
     st.download_button(
         "Download properties as CSV",
         csv,
@@ -176,7 +194,7 @@ elif page == "Molecular Properties Report":
 elif page == "Structure–Property Analysis":
     st.title("Structure–Property Analysis")
     df = pd.DataFrame([get_properties(n) for n in MOLECULES])
-    st.dataframe(df, use_container_width=True)
+    st.dataframe(df, width="stretch")
 
     numeric_columns = [
         "Molecular Weight (g/mol)",
@@ -248,18 +266,18 @@ elif page == "Assessment":
         submitted = st.form_submit_button("Submit Assessment")
 
     if submitted:
-        score = 0
-        for answer, (question, options, correct, explanation) in zip(
-            answers, questions
-        ):
-            if answer == options[correct]:
-                score += 1
+        if any(a is None for a in answers):
+            st.warning("Please answer all questions before submitting.")
+        else:
+            score = sum(
+                answer == options[correct]
+                for answer, (_, options, correct, _) in zip(answers, questions)
+            )
+            st.success(f"Your score: {score}/{len(questions)}")
 
-        st.success(f"Your score: {score}/{len(questions)}")
-
-        for i, (question, options, correct, explanation) in enumerate(questions):
-            st.write(f"**Question {i + 1}:** {explanation}")
-            st.write(f"Correct answer: {options[correct]}")
+            for i, (question, options, correct, explanation) in enumerate(questions):
+                st.write(f"**Question {i + 1}:** {explanation}")
+                st.write(f"Correct answer: {options[correct]}")
 
 elif page == "Final Project Report":
     st.title("Final Project Report")
