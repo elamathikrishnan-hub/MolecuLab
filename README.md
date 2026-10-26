@@ -6,7 +6,7 @@ MolecuLab is an educational web app for exploring molecular structures and
 physicochemical descriptors. It studies three molecules: **Ibuprofen**,
 **Nicotine** and **Quercetin**.
 
-🔗 **Live app:** _paste your Streamlit app link here_
+
 
 ## Features
 - **Theory:** short introduction to cheminformatics, SMILES and descriptors
