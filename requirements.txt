@@ -2,3 +2,4 @@ streamlit
 pandas
 matplotlib
 rdkit
+py3Dmol
