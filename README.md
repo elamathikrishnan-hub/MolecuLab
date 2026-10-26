@@ -1,5 +1,3 @@
-# MolecuLab
-Interactive Cheminformatics Virtual Laboratory
 # 🧪 MolecuLab
 
 **Interactive Cheminformatics Virtual Laboratory**
@@ -18,7 +16,7 @@ physicochemical descriptors. It studies three molecules: **Ibuprofen**,
   H-bond donors/acceptors, atom and bond counts, with CSV download
 - **Structure–Property Analysis:** compare descriptors across molecules
 - **Assessment:** five-question quiz with explanations
-- **Final Project Report:** auto-generated report with results, downloadable
+- **Molecules Report:** downloadable report describing the three molecules and their properties
 
 ## Built with
 Python · Streamlit · RDKit · py3Dmol · pandas
