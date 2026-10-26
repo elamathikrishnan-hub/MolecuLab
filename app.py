@@ -1,31 +1,117 @@
 import streamlit as st
+import streamlit.components.v1 as components
 import pandas as pd
 import matplotlib.pyplot as plt
+import py3Dmol
 from rdkit import Chem
-from rdkit.Chem import Descriptors, rdMolDescriptors, Draw
-from rdkit.Chem import AllChem
-from io import BytesIO
-from datetime import date
-
+from rdkit.Chem import AllChem, Descriptors, Draw, rdMolDescriptors
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.lib.enums import TA_CENTER
-from reportlab.lib.units import cm
 from reportlab.platypus import (
-    SimpleDocTemplate, Paragraph, Spacer, Image,
-    Table, TableStyle, PageBreak
+    SimpleDocTemplate,
+    Paragraph,
+    Spacer,
+    Table,
+    TableStyle,
 )
+from reportlab.lib.styles import getSampleStyleSheet
+from io import BytesIO
+
 
 # --------------------------------------------------
 # PAGE CONFIGURATION
 # --------------------------------------------------
 
 st.set_page_config(
-    page_title="MolecuLab | Virtual Chemistry Laboratory",
+    page_title="MolecuLab | Cheminformatics Laboratory",
     page_icon="🧪",
-    layout="wide"
+    layout="wide",
+    initial_sidebar_state="expanded",
 )
+
+
+# --------------------------------------------------
+# CUSTOM CSS
+# --------------------------------------------------
+
+st.markdown(
+    """
+    <style>
+    .stApp {
+        background-color: #F5F8FC;
+        color: #172B4D;
+    }
+
+    section[data-testid="stSidebar"] {
+        background-color: #FFFFFF;
+        border-right: 1px solid #DCE5F0;
+    }
+
+    section[data-testid="stSidebar"] * {
+        color: #172B4D !important;
+    }
+
+    section[data-testid="stSidebar"] label,
+    section[data-testid="stSidebar"] label p,
+    section[data-testid="stSidebar"] label span {
+        color: #172B4D !important;
+        opacity: 1 !important;
+        visibility: visible !important;
+    }
+
+    h1, h2, h3 {
+        color: #174A8B;
+    }
+
+    .hero {
+        background: linear-gradient(120deg, #174A8B, #3282CE);
+        padding: 30px;
+        border-radius: 16px;
+        color: white !important;
+        margin-bottom: 24px;
+    }
+
+    .hero h1, .hero p {
+        color: white !important;
+    }
+
+    .info-card {
+        background-color: white;
+        border: 1px solid #DCE5F0;
+        border-radius: 12px;
+        padding: 20px;
+        margin-bottom: 12px;
+    }
+
+    .small-note {
+        color: #52657D;
+        font-size: 14px;
+    }
+
+    div[data-testid="stMetric"] {
+        background-color: white;
+        border: 1px solid #DCE5F0;
+        padding: 16px;
+        border-radius: 12px;
+    }
+
+    div[data-testid="stMetric"] label {
+        color: #52657D !important;
+    }
+
+    div[data-testid="stMetric"] [data-testid="stMetricValue"] {
+        color: #174A8B !important;
+    }
+
+    .stButton button,
+    .stDownloadButton button {
+        border-radius: 8px;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
 
 # --------------------------------------------------
 # MOLECULE DATABASE
@@ -33,367 +119,235 @@ st.set_page_config(
 
 MOLECULES = {
     "Ibuprofen": {
-        "smiles": "CC(C)Cc1ccc(cc1)[C@@H](C)C(=O)O",
+        "smiles": "CC(C)CC1=CC=C(C=C1)C(C)C(=O)O",
+        "formula": "C13H18O2",
         "description": (
-            "Ibuprofen is a nonsteroidal anti-inflammatory drug (NSAID) "
-            "used to relieve pain, fever, and inflammation."
+            "Ibuprofen is a nonsteroidal anti-inflammatory drug "
+            "commonly used to relieve pain, fever, and inflammation."
         ),
-        "applications": (
-            "It is used for temporary relief of pain and inflammation, "
-            "including headaches, muscle pain, and some joint conditions."
-        ),
-        "category": "Pharmaceutical compound",
-        "color": "#2563EB"
+        "category": "Pharmaceutical",
     },
     "Nicotine": {
-        "smiles": "CN1CCC[C@H]1c2cccnc2",
+        "smiles": "CN1CCC[C@H]1C2=CN=CC=C2",
+        "formula": "C10H14N2",
         "description": (
-            "Nicotine is an alkaloid naturally found in tobacco plants. "
-            "It acts on nicotinic acetylcholine receptors in the nervous system."
+            "Nicotine is an alkaloid found naturally in tobacco "
+            "plants. It acts on nicotinic acetylcholine receptors."
         ),
-        "applications": (
-            "Nicotine is studied in neuroscience and pharmacology. "
-            "It is addictive and can cause harmful health effects."
-        ),
-        "category": "Natural alkaloid",
-        "color": "#7C3AED"
+        "category": "Alkaloid",
     },
     "Quercetin": {
-        "smiles": "O=c1c(O)c(-c2ccc(O)c(O)c2)oc2cc(O)cc(O)c12",
+        "smiles": "C1=CC(=C(C=C1C2=C(C(=O)C3=C(O2)C=C(C=C3O)O)O)O)O",
+        "formula": "C15H10O7",
         "description": (
-            "Quercetin is a plant flavonoid found in foods such as onions, "
-            "apples, and several other fruits and vegetables."
+            "Quercetin is a plant flavonoid found in various fruits "
+            "and vegetables. It is studied for its antioxidant properties."
         ),
-        "applications": (
-            "It is studied in nutritional science and laboratory research "
-            "on plant-derived compounds."
-        ),
-        "category": "Plant flavonoid",
-        "color": "#059669"
-    }
+        "category": "Flavonoid",
+    },
 }
 
+
 # --------------------------------------------------
-# CHEMISTRY FUNCTIONS
+# MOLECULE FUNCTIONS
 # --------------------------------------------------
 
-@st.cache_data
-def molecule_data(name):
+def get_molecule(name):
+    """Create an RDKit molecule from the stored SMILES."""
     smiles = MOLECULES[name]["smiles"]
+    mol = Chem.MolFromSmiles(smiles)
+    return mol
+
+
+@st.cache_data
+def smiles_to_molblock(smiles):
+    """Build a 3D structure (with hydrogens) and return it as a MolBlock."""
     mol = Chem.MolFromSmiles(smiles)
 
     if mol is None:
-        raise ValueError(f"Invalid molecular structure for {name}")
+        return None
 
-    canonical = Chem.MolToSmiles(mol)
-    formula = rdMolDescriptors.CalcMolFormula(mol)
+    mol = Chem.AddHs(mol)
 
-    properties = {
-        "Molecule": name,
-        "Molecular Formula": formula,
-        "Molecular Weight (g/mol)": round(Descriptors.MolWt(mol), 2),
-        "LogP": round(Descriptors.MolLogP(mol), 2),
-        "TPSA (Å²)": round(Descriptors.TPSA(mol), 2),
-        "H-Bond Donors": rdMolDescriptors.CalcNumHBD(mol),
-        "H-Bond Acceptors": rdMolDescriptors.CalcNumHBA(mol),
-        "Heavy Atoms": mol.GetNumHeavyAtoms(),
-        "Total Atoms": mol.GetNumAtoms(),
-        "Bonds": mol.GetNumBonds()
+    params = AllChem.ETKDGv3()
+    params.randomSeed = 42
+
+    if AllChem.EmbedMolecule(mol, params) != 0:
+        return None
+
+    try:
+        AllChem.MMFFOptimizeMolecule(mol, maxIters=500)
+    except Exception:
+        pass
+
+    return Chem.MolToMolBlock(mol)
+
+
+def show_3d(smiles, key):
+    """Show an interactive, rotatable 3D model of a molecule."""
+    style_name = st.selectbox(
+        "3D style",
+        ["Ball and stick", "Stick", "Sphere"],
+        key=key,
+    )
+
+    styles = {
+        "Ball and stick": {
+            "stick": {"radius": 0.15},
+            "sphere": {"scale": 0.3},
+        },
+        "Stick": {"stick": {}},
+        "Sphere": {"sphere": {}},
     }
 
-    return mol, canonical, properties
+    molblock = smiles_to_molblock(smiles)
+
+    if molblock is None:
+        st.error("Could not generate a 3D structure for this molecule.")
+        return
+
+    view = py3Dmol.view(width=500, height=400)
+    view.addModel(molblock, "mol")
+    view.setStyle({}, styles[style_name])
+    view.setBackgroundColor("white")
+    view.zoomTo()
+
+    components.html(view._make_html(), height=420)
+    st.caption("Drag to rotate. Pinch or scroll to zoom.")
 
 
-def molecule_image(mol):
-    """Create a 2D molecular structure image."""
-    copy = Chem.Mol(mol)
-    Chem.rdDepictor.Compute2DCoords(copy)
-    return Draw.MolToImage(copy, size=(650, 420))
+def get_properties(name):
+    """Calculate molecular descriptors using RDKit."""
+    mol = get_molecule(name)
+
+    if mol is None:
+        return None
+
+    return {
+        "Molecule": name,
+        "Molecular Formula": rdMolDescriptors.CalcMolFormula(mol),
+        "Molecular Weight (g/mol)": round(
+            Descriptors.MolWt(mol), 2
+        ),
+        "LogP": round(Descriptors.MolLogP(mol), 2),
+        "TPSA (Å²)": round(
+            rdMolDescriptors.CalcTPSA(mol), 2
+        ),
+        "H-Bond Donors": rdMolDescriptors.CalcNumHBD(mol),
+        "H-Bond Acceptors": rdMolDescriptors.CalcNumHBA(mol),
+        "Rotatable Bonds": rdMolDescriptors.CalcNumRotatableBonds(mol),
+    }
 
 
-def make_pdf(name, student_name, registration):
-    """Create a separate PDF report for the selected molecule."""
+def create_pdf(name):
+    """Generate a downloadable PDF report."""
+    props = get_properties(name)
 
-    mol, canonical, props = molecule_data(name)
-    info = MOLECULES[name]
+    if props is None:
+        return None
 
-    pdf_buffer = BytesIO()
-
-    doc = SimpleDocTemplate(
-        pdf_buffer,
+    buffer = BytesIO()
+    document = SimpleDocTemplate(
+        buffer,
         pagesize=A4,
-        rightMargin=1.8 * cm,
-        leftMargin=1.8 * cm,
-        topMargin=1.8 * cm,
-        bottomMargin=1.8 * cm
+        rightMargin=40,
+        leftMargin=40,
+        topMargin=40,
+        bottomMargin=40,
     )
 
     styles = getSampleStyleSheet()
-
-    styles.add(ParagraphStyle(
-        name="ReportTitle",
-        parent=styles["Title"],
-        fontSize=25,
-        leading=31,
-        textColor=colors.HexColor("#174EA6"),
-        alignment=TA_CENTER,
-        spaceAfter=14
-    ))
-
-    styles.add(ParagraphStyle(
-        name="SectionHeading",
-        parent=styles["Heading2"],
-        fontSize=14,
-        leading=19,
-        textColor=colors.HexColor("#174EA6"),
-        spaceBefore=13,
-        spaceAfter=7
-    ))
-
-    styles.add(ParagraphStyle(
-        name="ReportBody",
-        parent=styles["BodyText"],
-        fontSize=10,
-        leading=15,
-        spaceAfter=7
-    ))
-
     story = []
 
-    # Cover heading
-    story.append(Paragraph("MolecuLab", styles["ReportTitle"]))
-    story.append(Paragraph(
-        "INDIVIDUAL MOLECULAR ANALYSIS REPORT",
-        styles["Heading2"]
-    ))
+    story.append(
+        Paragraph(
+            "MolecuLab - Molecular Properties Report",
+            styles["Title"],
+        )
+    )
     story.append(Spacer(1, 12))
 
-    story.append(Paragraph(
-        f"<b>Molecule:</b> {name}",
-        styles["ReportBody"]
-    ))
-    story.append(Paragraph(
-        f"<b>Report date:</b> {date.today().strftime('%B %d, %Y')}",
-        styles["ReportBody"]
-    ))
-    story.append(Paragraph(
-        f"<b>Student:</b> {student_name or 'Not provided'}",
-        styles["ReportBody"]
-    ))
-    story.append(Paragraph(
-        f"<b>Registration number:</b> "
-        f"{registration or 'Not provided'}",
-        styles["ReportBody"]
-    ))
+    story.append(
+        Paragraph(
+            f"<b>Molecule:</b> {name}",
+            styles["Normal"],
+        )
+    )
+    story.append(Spacer(1, 8))
 
-    story.append(Spacer(1, 12))
-    story.append(Paragraph("1. Introduction", styles["SectionHeading"]))
-    story.append(Paragraph(info["description"], styles["ReportBody"]))
-    story.append(Paragraph(
-        f"<b>Compound category:</b> {info['category']}",
-        styles["ReportBody"]
-    ))
+    story.append(
+        Paragraph(
+            MOLECULES[name]["description"],
+            styles["BodyText"],
+        )
+    )
+    story.append(Spacer(1, 16))
 
-    story.append(Paragraph(
-        "2. Molecular Structure", styles["SectionHeading"]
-    ))
+    story.append(
+        Paragraph("Molecular Properties", styles["Heading2"])
+    )
+    story.append(Spacer(1, 8))
 
-    image_buffer = BytesIO()
-    molecule_image(mol).save(image_buffer, format="PNG")
-    image_buffer.seek(0)
-
-    story.append(Image(
-        image_buffer,
-        width=14 * cm,
-        height=9 * cm,
-        kind="proportional"
-    ))
-
-    story.append(Paragraph(
-        "<b>Input SMILES:</b> " + info["smiles"],
-        styles["ReportBody"]
-    ))
-    story.append(Paragraph(
-        "<b>Canonical SMILES:</b> " + canonical,
-        styles["ReportBody"]
-    ))
-
-    story.append(Paragraph(
-        "3. Molecular Properties", styles["SectionHeading"]
-    ))
-
-    table_data = [["Property", "Calculated value"]]
+    table_data = [["Property", "Calculated Value"]]
 
     for key, value in props.items():
         if key != "Molecule":
             table_data.append([key, str(value)])
 
-    table = Table(
-        table_data,
-        colWidths=[8 * cm, 7 * cm],
-        repeatRows=1
-    )
+    table = Table(table_data, colWidths=[240, 220])
 
-    table.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#174EA6")),
-        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-        ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#CBD5E1")),
-        ("ROWBACKGROUNDS", (0, 1), (-1, -1),
-         [colors.white, colors.HexColor("#EFF6FF")]),
-        ("PADDING", (0, 0), (-1, -1), 7),
-        ("VALIGN", (0, 0), (-1, -1), "TOP")
-    ]))
+    table.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#174A8B")),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#DCE5F0")),
+                ("BACKGROUND", (0, 1), (-1, -1), colors.HexColor("#F5F8FC")),
+                ("PADDING", (0, 0), (-1, -1), 8),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ]
+        )
+    )
 
     story.append(table)
+    story.append(Spacer(1, 16))
 
-    story.append(Paragraph(
-        "4. Chemical Analysis", styles["SectionHeading"]
-    ))
+    story.append(
+        Paragraph("SMILES Representation", styles["Heading2"])
+    )
+    story.append(Spacer(1, 6))
+    story.append(
+        Paragraph(MOLECULES[name]["smiles"], styles["Code"])
+    )
+    story.append(Spacer(1, 16))
 
-    analysis = (
-        f"The molecular formula of {name} is {props['Molecular Formula']}. "
-        f"Its molecular weight is "
-        f"{props['Molecular Weight (g/mol)']} g/mol. "
-        f"Its calculated LogP is {props['LogP']}, and its TPSA is "
-        f"{props['TPSA (Å²)']} Å². "
-        f"The structure contains {props['Heavy Atoms']} heavy atoms and "
-        f"{props['Bonds']} bonds. These descriptors help characterize "
-        "the molecule but do not independently establish its biological "
-        "activity, safety, or effectiveness."
+    story.append(
+        Paragraph(
+            "This report was generated using MolecuLab and RDKit. "
+            "Calculated descriptors are computational estimates and "
+            "do not replace experimental measurements.",
+            styles["Italic"],
+        )
     )
 
-    story.append(Paragraph(analysis, styles["ReportBody"]))
+    document.build(story)
+    buffer.seek(0)
 
-    story.append(Paragraph(
-        "5. Applications and Significance", styles["SectionHeading"]
-    ))
-    story.append(Paragraph(info["applications"], styles["ReportBody"]))
-
-    story.append(Paragraph(
-        "6. Conclusion", styles["SectionHeading"]
-    ))
-    story.append(Paragraph(
-        f"This report summarizes the structure and selected "
-        f"physicochemical descriptors of {name}. Cheminformatics tools "
-        "make it easier to represent, visualize, and compare chemical "
-        "molecules using computational methods.",
-        styles["ReportBody"]
-    ))
-
-    story.append(Paragraph(
-        "7. References", styles["SectionHeading"]
-    ))
-    story.append(Paragraph(
-        "1. RDKit documentation: https://www.rdkit.org/docs/<br/>"
-        "2. PubChem, National Library of Medicine: "
-        "https://pubchem.ncbi.nlm.nih.gov/<br/>"
-        "3. Streamlit documentation: https://docs.streamlit.io/",
-        styles["ReportBody"]
-    ))
-
-    def footer(canvas, document):
-        canvas.saveState()
-        canvas.setFont("Helvetica", 8)
-        canvas.setFillColor(colors.HexColor("#64748B"))
-        canvas.drawString(1.8 * cm, 1.0 * cm, "MolecuLab | Educational Report")
-        canvas.drawRightString(
-            A4[0] - 1.8 * cm,
-            1.0 * cm,
-            f"Page {document.page}"
-        )
-        canvas.restoreState()
-
-    doc.build(story, onFirstPage=footer, onLaterPages=footer)
-
-    pdf_buffer.seek(0)
-    return pdf_buffer.getvalue()
+    return buffer.getvalue()
 
 
 # --------------------------------------------------
-# PROFESSIONAL WHITE AND BLUE DESIGN
-# --------------------------------------------------
-
-st.markdown("""
-<style>
-    .stApp {
-        background-color: #F7F9FC;
-        color: #172B4D;
-    }
-
-    section[data-testid="stSidebar"] {
-        background-color: #FFFFFF;
-        border-right: 1px solid #E2E8F0;
-    }
-
-    .block-container {
-        padding-top: 2rem;
-        padding-bottom: 3rem;
-        max-width: 1200px;
-    }
-
-    .hero {
-        padding: 28px;
-        border-radius: 18px;
-        background: linear-gradient(120deg, #EAF2FF, #FFFFFF);
-        border: 1px solid #D7E5FF;
-        margin-bottom: 24px;
-    }
-
-    .hero h1 {
-        color: #174EA6;
-        font-size: 2.4rem;
-        margin-bottom: 8px;
-    }
-
-    .hero p {
-        color: #475569;
-        font-size: 1.05rem;
-    }
-
-    .molecule-card {
-        background: #FFFFFF;
-        padding: 20px;
-        border: 1px solid #E2E8F0;
-        border-radius: 15px;
-        min-height: 180px;
-        box-shadow: 0 3px 12px rgba(15, 23, 42, 0.04);
-    }
-
-    .molecule-card h3 {
-        color: #174EA6;
-    }
-
-    div[data-testid="stMetric"] {
-        background: #FFFFFF;
-        border: 1px solid #E2E8F0;
-        padding: 15px;
-        border-radius: 12px;
-    }
-
-    div.stButton > button,
-    div.stDownloadButton > button {
-        border-radius: 9px;
-        border: 1px solid #2563EB;
-    }
-
-    h1, h2, h3 {
-        color: #174EA6;
-    }
-</style>
-""", unsafe_allow_html=True)
-
-
-# --------------------------------------------------
-# SIDEBAR
+# SIDEBAR NAVIGATION
 # --------------------------------------------------
 
 st.sidebar.markdown("# MolecuLab")
 st.sidebar.caption("Interactive Cheminformatics Laboratory")
 st.sidebar.divider()
 
-page = st.sidebar.radio(
-    "EXPLORE",
+st.sidebar.markdown("### Navigation")
+
+page = st.sidebar.selectbox(
+    "Choose a section",
     [
         "Home",
         "Theory",
@@ -401,125 +355,184 @@ page = st.sidebar.radio(
         "Properties Dashboard",
         "Compare Molecules",
         "Chemistry Quiz",
-        "Individual PDF Reports"
-    ]
+        "Individual PDF Reports",
+    ],
+    key="main_navigation",
 )
 
 st.sidebar.divider()
-st.sidebar.markdown("### Student Information")
 
-student_name = st.sidebar.text_input(
-    "Student name",
-    key="student_name"
+st.sidebar.markdown("### Project Information")
+st.sidebar.write("**Domain:** Cheminformatics")
+st.sidebar.write("**Toolkit:** RDKit")
+st.sidebar.write("**Interface:** Streamlit")
+
+st.sidebar.caption(
+    "An educational project for exploring molecular structures "
+    "and chemical properties."
 )
-
-registration = st.sidebar.text_input(
-    "Registration number",
-    key="registration"
-)
-
-st.sidebar.caption("Computational chemistry learning tool")
 
 
 # --------------------------------------------------
-# HOME
+# HOME PAGE
 # --------------------------------------------------
 
 if page == "Home":
 
-    st.markdown("""
-    <div class="hero">
-        <h1>MolecuLab</h1>
-        <p>
-        Explore molecular structures, discover chemical properties,
-        and understand the science behind important molecules.
-        </p>
-    </div>
-    """, unsafe_allow_html=True)
+    st.markdown(
+        """
+        <div class="hero">
+            <h1>MolecuLab</h1>
+            <p>
+                Interactive Cheminformatics Virtual Laboratory
+            </p>
+            <p>
+                Explore molecular structures, calculate chemical
+                descriptors, and compare important molecular properties.
+            </p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
-    st.subheader("Your Molecular Workspace")
+    st.subheader("Welcome to MolecuLab")
+
+    st.write(
+        "MolecuLab is an educational web application that connects "
+        "chemistry with computational tools. It helps students "
+        "understand how molecular structures can be represented "
+        "and analyzed digitally."
+    )
+
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+        st.markdown(
+            """
+            <div class="info-card">
+                <h3>Molecular Explorer</h3>
+                <p>
+                    View 2D and interactive 3D molecular structures
+                    and examine their SMILES representations.
+                </p>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    with col2:
+        st.markdown(
+            """
+            <div class="info-card">
+                <h3>Property Analysis</h3>
+                <p>
+                    Calculate molecular weight, LogP, TPSA,
+                    and hydrogen-bond counts.
+                </p>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    with col3:
+        st.markdown(
+            """
+            <div class="info-card">
+                <h3>Molecule Comparison</h3>
+                <p>
+                    Compare descriptors of different molecules
+                    using tables and charts.
+                </p>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    st.subheader("Molecules in the Laboratory")
 
     cols = st.columns(3)
 
-    for col, name in zip(cols, MOLECULES):
-        info = MOLECULES[name]
-
+    for col, name in zip(cols, MOLECULES.keys()):
         with col:
-            st.markdown(
-                f"""
-                <div class="molecule-card">
-                    <h3>{name}</h3>
-                    <p>{info['category']}</p>
-                    <p>{info['description']}</p>
-                </div>
-                """,
-                unsafe_allow_html=True
-            )
-
-    st.write("")
-    st.subheader("Explore the Laboratory")
-
-    c1, c2, c3 = st.columns(3)
-
-    with c1:
-        st.markdown("**01 — Molecular Explorer**")
-        st.write("Inspect structures and SMILES notation.")
-
-    with c2:
-        st.markdown("**02 — Properties Dashboard**")
-        st.write("Explore important molecular descriptors.")
-
-    with c3:
-        st.markdown("**03 — Individual Reports**")
-        st.write("Generate a separate PDF for each molecule.")
+            st.markdown(f"### {name}")
+            st.write(MOLECULES[name]["category"])
+            st.write(MOLECULES[name]["description"])
 
     st.info(
-        "Choose a section from the left navigation menu to begin."
+        "Use the Navigation menu in the sidebar to explore "
+        "the different laboratory sections."
     )
 
 
 # --------------------------------------------------
-# THEORY
+# THEORY PAGE
 # --------------------------------------------------
 
 elif page == "Theory":
 
-    st.title("Chemistry Foundations")
+    st.title("Cheminformatics Theory")
+
     st.write(
-        "Cheminformatics combines chemistry, computation, and data analysis "
-        "to represent and study chemical structures."
+        "Cheminformatics combines chemistry, computer science, "
+        "and data analysis to store, represent, and study chemical "
+        "structures and their properties."
     )
 
-    with st.expander("What is SMILES?"):
+    with st.expander("1. What is a SMILES notation?"):
         st.write(
-            "SMILES stands for Simplified Molecular Input Line Entry System. "
-            "It represents a chemical structure using a string of characters."
+            "SMILES stands for Simplified Molecular Input Line Entry "
+            "System. It represents a molecular structure as a text string. "
+            "This makes it possible to store and process chemical "
+            "structures using computers."
+        )
+        st.code("CCO", language=None)
+        st.caption("Example: CCO represents ethanol.")
+
+    with st.expander("2. What is molecular weight?"):
+        st.write(
+            "Molecular weight is the sum of the atomic weights of "
+            "all atoms present in a molecule. It is commonly expressed "
+            "in grams per mole (g/mol)."
         )
 
-    with st.expander("What is molecular weight?"):
+    with st.expander("3. What is LogP?"):
         st.write(
-            "Molecular weight is the sum of the atomic weights of the atoms "
-            "in a molecule. It is commonly expressed in g/mol."
+            "LogP estimates how a neutral compound distributes between "
+            "octanol and water. It is often used to discuss relative "
+            "lipophilicity. It is not, by itself, a complete measure "
+            "of absorption or drug effectiveness."
         )
 
-    with st.expander("What is LogP?"):
+    with st.expander("4. What is TPSA?"):
         st.write(
-            "LogP estimates how a neutral molecule partitions between "
-            "octanol and water. It is commonly used as a descriptor of "
-            "lipophilicity."
+            "Topological Polar Surface Area estimates the contribution "
+            "of polar atoms to a molecule's surface. It can help "
+            "researchers compare molecular properties."
         )
 
-    with st.expander("What is TPSA?"):
+    with st.expander("5. What are hydrogen-bond donors and acceptors?"):
         st.write(
-            "Topological polar surface area estimates the contribution of "
-            "polar atoms to a molecule's surface. It can help characterize "
-            "molecular polarity."
+            "Hydrogen-bond donors are groups that can donate a hydrogen "
+            "in hydrogen bonding. Acceptors are atoms or groups that "
+            "can accept a hydrogen bond."
         )
 
-    with st.expander("What are hydrogen bond donors and acceptors?"):
+    with st.expander("6. What is RDKit?"):
         st.write(
-            "These descriptors estimate the groups that can donate or accept "
-            "hydrogen bonds, which can influence molecular interactions."
+            "RDKit is an open-source cheminformatics toolkit. It can "
+            "read molecular representations, generate structures, "
+            "and calculate many chemical descriptors."
+        )
+
+    with st.expander("7. What is a 3D molecular structure?"):
+        st.write(
+            "A 2D drawing shows which atoms are connected. A 3D "
+            "structure also shows how the atoms are arranged in space, "
+            "including bond angles and the overall shape of the molecule. "
+            "MolecuLab generates 3D coordinates with RDKit, adds "
+            "hydrogen atoms, and optimizes the geometry with a force "
+            "field. The result is one low-energy conformer, not the only "
+            "shape the molecule can adopt."
         )
 
 
@@ -531,67 +544,60 @@ elif page == "Molecular Explorer":
 
     st.title("Molecular Explorer")
 
-    name = st.selectbox("Choose a molecule", list(MOLECULES))
-    mol, canonical, props = molecule_data(name)
-
-    left, right = st.columns([1.15, 1])
-
-    with left:
-        st.subheader("2D Molecular Structure")
-        st.image(molecule_image(mol), use_container_width=True)
-
-    with right:
-        st.subheader(name)
-        st.write(MOLECULES[name]["description"])
-        st.caption(f"Category: {MOLECULES[name]['category']}")
-
-        st.markdown("**Molecular formula**")
-        st.code(props["Molecular Formula"])
-
-        st.markdown("**Input SMILES**")
-        st.code(MOLECULES[name]["smiles"])
-
-        st.markdown("**Canonical SMILES**")
-        st.code(canonical)
-
-    st.subheader("Structure Information")
-
-    a, b, c = st.columns(3)
-    a.metric("Heavy atoms", props["Heavy Atoms"])
-    b.metric("Total atoms", props["Total Atoms"])
-    c.metric("Bonds", props["Bonds"])
-
-    st.subheader("Validate Another SMILES")
-
-    custom_smiles = st.text_input(
-        "Enter a SMILES string",
-        placeholder="Enter SMILES notation here"
+    name = st.selectbox(
+        "Select a molecule",
+        list(MOLECULES.keys()),
     )
 
-    if st.button("Validate structure"):
+    mol = get_molecule(name)
 
-        if not custom_smiles.strip():
-            st.warning("Enter a SMILES string first.")
-        else:
-            custom_mol = Chem.MolFromSmiles(custom_smiles)
+    if mol is not None:
 
-            if custom_mol is None:
-                st.error("The supplied SMILES could not be parsed.")
+        col1, col2 = st.columns([1, 1])
+
+        with col1:
+            view_mode = st.radio(
+                "View mode",
+                ["2D", "3D"],
+                horizontal=True,
+            )
+
+            if view_mode == "2D":
+                st.subheader("2D Molecular Structure")
+
+                image = Draw.MolToImage(
+                    mol,
+                    size=(500, 400),
+                )
+
+                st.image(image, width="stretch")
+
             else:
-                st.success("Valid SMILES structure.")
-                st.image(
-                    molecule_image(custom_mol),
-                    caption="Your molecular structure",
-                    use_container_width=True
-                )
-                st.write(
-                    "Formula:",
-                    rdMolDescriptors.CalcMolFormula(custom_mol)
-                )
-                st.write(
-                    "Canonical SMILES:",
-                    Chem.MolToSmiles(custom_mol)
-                )
+                st.subheader("3D Molecular Structure")
+                show_3d(MOLECULES[name]["smiles"], key="style_explorer")
+
+        with col2:
+            st.subheader("Molecule Information")
+
+            st.write("**Name:**", name)
+            st.write("**Category:**", MOLECULES[name]["category"])
+            st.write("**Formula:**", rdMolDescriptors.CalcMolFormula(mol))
+
+            st.write("**Description:**")
+            st.write(MOLECULES[name]["description"])
+
+            st.write("**SMILES Representation:**")
+            st.code(MOLECULES[name]["smiles"])
+
+            st.download_button(
+                "Download SMILES",
+                data=MOLECULES[name]["smiles"],
+                file_name=f"{name.lower()}_smiles.txt",
+                mime="text/plain",
+            )
+
+    else:
+        st.error("The molecular structure could not be generated.")
 
 
 # --------------------------------------------------
@@ -602,40 +608,71 @@ elif page == "Properties Dashboard":
 
     st.title("Molecular Properties Dashboard")
 
-    name = st.selectbox("Select a molecule", list(MOLECULES))
-    mol, canonical, props = molecule_data(name)
-
-    st.subheader(name)
-
-    c1, c2, c3 = st.columns(3)
-
-    c1.metric("Molecular Weight", f"{props['Molecular Weight (g/mol)']} g/mol")
-    c2.metric("LogP", props["LogP"])
-    c3.metric("TPSA", f"{props['TPSA (Å²)']} Å²")
-
-    c4, c5, c6 = st.columns(3)
-
-    c4.metric("H-Bond Donors", props["H-Bond Donors"])
-    c5.metric("H-Bond Acceptors", props["H-Bond Acceptors"])
-    c6.metric("Heavy Atoms", props["Heavy Atoms"])
-
-    st.info(
-        "These values are computed using RDKit. They are molecular "
-        "descriptors, not direct measurements of clinical effectiveness "
-        "or safety."
+    name = st.selectbox(
+        "Choose a molecule",
+        list(MOLECULES.keys()),
     )
 
-    st.subheader("Complete Property Table")
+    props = get_properties(name)
 
-    single_df = pd.DataFrame([props])
-    st.dataframe(single_df, use_container_width=True, hide_index=True)
+    if props is not None:
 
-    st.download_button(
-        "Download this molecule's properties (CSV)",
-        single_df.to_csv(index=False).encode("utf-8"),
-        file_name=f"{name.lower()}_properties.csv",
-        mime="text/csv"
-    )
+        st.subheader(name)
+
+        col1, col2, col3 = st.columns(3)
+
+        col1.metric(
+            "Molecular Weight",
+            f"{props['Molecular Weight (g/mol)']} g/mol",
+        )
+
+        col2.metric(
+            "LogP",
+            props["LogP"],
+        )
+
+        col3.metric(
+            "TPSA",
+            f"{props['TPSA (Å²)']} Å²",
+        )
+
+        col4, col5, col6 = st.columns(3)
+
+        col4.metric(
+            "H-Bond Donors",
+            props["H-Bond Donors"],
+        )
+
+        col5.metric(
+            "H-Bond Acceptors",
+            props["H-Bond Acceptors"],
+        )
+
+        col6.metric(
+            "Rotatable Bonds",
+            props["Rotatable Bonds"],
+        )
+
+        st.subheader("Complete Property Table")
+
+        property_df = pd.DataFrame(
+            {
+                "Property": list(props.keys()),
+                "Value": [str(v) for v in props.values()],
+            }
+        )
+
+        st.dataframe(
+            property_df,
+            width="stretch",
+            hide_index=True,
+        )
+
+        st.caption(
+            "Values are calculated using RDKit. Different software "
+            "versions or descriptor definitions may produce "
+            "slightly different results."
+        )
 
 
 # --------------------------------------------------
@@ -646,65 +683,92 @@ elif page == "Compare Molecules":
 
     st.title("Compare Molecules")
 
-    left_name = st.selectbox(
-        "First molecule",
-        list(MOLECULES),
-        index=0
-    )
-
-    right_name = st.selectbox(
-        "Second molecule",
-        list(MOLECULES),
-        index=1
-    )
-
-    left_props = molecule_data(left_name)[2]
-    right_props = molecule_data(right_name)[2]
-
-    comparison = pd.DataFrame({
-        left_name: left_props,
-        right_name: right_props
-    })
-
-    st.subheader("Side-by-Side Comparison")
-
-    st.dataframe(comparison, use_container_width=True)
-
-    numeric_properties = [
-        "Molecular Weight (g/mol)",
-        "LogP",
-        "TPSA (Å²)",
-        "H-Bond Donors",
-        "H-Bond Acceptors",
-        "Heavy Atoms",
-        "Bonds"
-    ]
-
-    selected_property = st.selectbox(
-        "Property to visualize",
-        numeric_properties
-    )
-
-    chart_df = pd.DataFrame({
-        "Molecule": [left_name, right_name],
-        "Value": [
-            left_props[selected_property],
-            right_props[selected_property]
-        ]
-    })
-
-    st.bar_chart(chart_df.set_index("Molecule"))
-
-    difference = (
-        right_props[selected_property] -
-        left_props[selected_property]
-    )
-
     st.write(
-        f"The difference in {selected_property} "
-        f"({right_name} minus {left_name}) is "
-        f"{difference:.2f}."
+        "Select two molecules to compare their calculated "
+        "chemical descriptors."
     )
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        molecule_a = st.selectbox(
+            "First molecule",
+            list(MOLECULES.keys()),
+            index=0,
+        )
+
+    with col2:
+        molecule_b = st.selectbox(
+            "Second molecule",
+            list(MOLECULES.keys()),
+            index=1,
+        )
+
+    props_a = get_properties(molecule_a)
+    props_b = get_properties(molecule_b)
+
+    if props_a is not None and props_b is not None:
+
+        comparison = pd.DataFrame(
+            [props_a, props_b]
+        )
+
+        st.subheader("Comparison Table")
+
+        st.dataframe(
+            comparison,
+            width="stretch",
+            hide_index=True,
+        )
+
+        st.subheader("Molecular Weight Comparison")
+
+        fig, ax = plt.subplots(figsize=(8, 4))
+
+        ax.bar(
+            [molecule_a, molecule_b],
+            [
+                props_a["Molecular Weight (g/mol)"],
+                props_b["Molecular Weight (g/mol)"],
+            ],
+        )
+
+        ax.set_ylabel("Molecular Weight (g/mol)")
+        ax.set_title("Molecular Weight Comparison")
+
+        st.pyplot(fig)
+        plt.close(fig)
+
+        st.subheader("LogP Comparison")
+
+        fig, ax = plt.subplots(figsize=(8, 4))
+
+        ax.bar(
+            [molecule_a, molecule_b],
+            [
+                props_a["LogP"],
+                props_b["LogP"],
+            ],
+        )
+
+        ax.set_ylabel("LogP")
+        ax.set_title("Calculated LogP Comparison")
+
+        st.pyplot(fig)
+        plt.close(fig)
+
+        st.download_button(
+            "Download Comparison CSV",
+            data=comparison.to_csv(index=False).encode("utf-8-sig"),
+            file_name="moleculab_comparison.csv",
+            mime="text/csv",
+        )
+
+        if molecule_a == molecule_b:
+            st.info(
+                "Both selections refer to the same molecule. "
+                "Choose different molecules for a more useful comparison."
+            )
 
 
 # --------------------------------------------------
@@ -713,96 +777,131 @@ elif page == "Compare Molecules":
 
 elif page == "Chemistry Quiz":
 
-    st.title("Chemistry Knowledge Check")
+    st.title("Chemistry Quiz")
+
+    st.write(
+        "Test your understanding of molecular representations "
+        "and cheminformatics concepts."
+    )
 
     questions = [
-        (
-            "What does SMILES represent?",
-            [
-                "A text representation of molecular structure",
-                "A microscope",
-                "A biological cell"
+        {
+            "question": "What does SMILES represent?",
+            "options": [
+                "A molecular structure as text",
+                "A type of microscope",
+                "A laboratory temperature",
+                "A chemical reaction speed",
             ],
-            0,
-            "SMILES represents molecular structures as text."
-        ),
-        (
-            "Which property represents molecular mass?",
-            [
+            "answer": "A molecular structure as text",
+            "explanation": (
+                "SMILES is a text-based representation of molecular structures."
+            ),
+        },
+        {
+            "question": "Which toolkit is used in MolecuLab?",
+            "options": [
+                "TensorFlow",
+                "RDKit",
+                "OpenCV",
+                "Pygame",
+            ],
+            "answer": "RDKit",
+            "explanation": (
+                "RDKit provides cheminformatics tools for molecular structures "
+                "and descriptor calculations."
+            ),
+        },
+        {
+            "question": "Which property is expressed in g/mol?",
+            "options": [
+                "LogP",
                 "TPSA",
                 "Molecular weight",
-                "LogP"
+                "Number of atoms",
             ],
-            1,
-            "Molecular weight is commonly expressed in g/mol."
-        ),
-        (
-            "What does TPSA describe?",
-            [
-                "Topological polar surface area",
-                "Molecular color",
-                "Number of chemical samples"
+            "answer": "Molecular weight",
+            "explanation": (
+                "Molecular weight is commonly reported in grams per mole."
+            ),
+        },
+        {
+            "question": "What does TPSA stand for?",
+            "options": [
+                "Total Protein Structure Analysis",
+                "Topological Polar Surface Area",
+                "Thermal Pressure System Analysis",
+                "Total Pharmaceutical Safety Assessment",
             ],
-            0,
-            "TPSA is a descriptor of molecular polarity."
-        ),
-        (
-            "Which of these is a plant flavonoid?",
-            [
-                "Ibuprofen",
-                "Nicotine",
-                "Quercetin"
+            "answer": "Topological Polar Surface Area",
+            "explanation": (
+                "TPSA estimates the polar surface area associated with "
+                "a molecular structure."
+            ),
+        },
+        {
+            "question": "Which Python toolkit generates 2D molecular drawings here?",
+            "options": [
+                "RDKit",
+                "ReportLab",
+                "Pandas",
+                "Streamlit",
             ],
-            2,
-            "Quercetin is a plant-derived flavonoid."
-        ),
-        (
-            "What does LogP help estimate?",
-            [
-                "Molecular age",
-                "Partitioning between octanol and water",
-                "Number of chemical bonds"
-            ],
-            1,
-            "LogP is commonly used to characterize lipophilicity."
-        )
+            "answer": "RDKit",
+            "explanation": (
+                "RDKit can generate 2D depictions of molecular structures."
+            ),
+        },
     ]
 
-    with st.form("moleculab_quiz"):
+    with st.form("chemistry_quiz"):
 
         answers = []
 
-        for i, (question, options, correct, explanation) in enumerate(questions):
-            answer = st.radio(
-                f"{i + 1}. {question}",
-                options,
-                index=None,
-                key=f"quiz_{i}"
-            )
-            answers.append(answer)
+        for i, q in enumerate(questions):
+            st.markdown(f"### Question {i + 1}")
+            st.write(q["question"])
 
-        submitted = st.form_submit_button("Check My Answers")
+            selected = st.radio(
+                "Choose your answer:",
+                q["options"],
+                key=f"quiz_{i}",
+            )
+
+            answers.append(selected)
+
+        submitted = st.form_submit_button("Submit Answers")
 
     if submitted:
 
-        score = sum(
-            answer == options[correct]
-            for answer, (question, options, correct, explanation)
-            in zip(answers, questions)
-        )
+        score = 0
 
-        st.success(f"Your score: {score}/{len(questions)}")
+        st.subheader("Quiz Results")
 
-        for i, (question, options, correct, explanation) in enumerate(questions):
-            if answers[i] == options[correct]:
-                st.markdown(f"**Question {i + 1}: Correct**")
+        for i, q in enumerate(questions):
+
+            if answers[i] == q["answer"]:
+                score += 1
+                st.success(f"Question {i + 1}: Correct!")
             else:
-                st.markdown(
-                    f"**Question {i + 1}: Correct answer — "
-                    f"{options[correct]}**"
+                st.error(
+                    f"Question {i + 1}: Correct answer: {q['answer']}"
                 )
 
-            st.write(explanation)
+            st.caption(q["explanation"])
+
+        st.metric(
+            "Your Score",
+            f"{score} / {len(questions)}",
+        )
+
+        if score == len(questions):
+            st.balloons()
+            st.success("Excellent! You answered every question correctly.")
+        elif score >= 3:
+            st.info("Good work! Review the explanations to improve further.")
+        else:
+            st.info("Keep learning! Visit the Theory section and try again.")
 
 
 # --------------------------------------------------
@@ -811,79 +910,55 @@ elif page == "Chemistry Quiz":
 
 elif page == "Individual PDF Reports":
 
-    st.title("Individual Molecular Report Generator")
+    st.title("Individual Molecular Reports")
 
     st.write(
-        "Generate a separate scientific report for one selected molecule. "
-        "Each downloaded PDF contains information about that molecule only."
+        "Generate a PDF report containing calculated descriptors "
+        "and the SMILES representation of a selected molecule."
     )
 
     name = st.selectbox(
-        "Select the molecule for your report",
-        list(MOLECULES),
-        key="report_molecule"
+        "Select a molecule for the report",
+        list(MOLECULES.keys()),
     )
 
-    mol, canonical, props = molecule_data(name)
+    st.subheader("Report Preview")
 
-    st.subheader(f"{name} — Report Preview")
+    st.write("**Molecule:**", name)
+    st.write("**Formula:**", MOLECULES[name]["formula"])
+    st.write("**Category:**", MOLECULES[name]["category"])
 
-    left, right = st.columns([1, 1])
+    props = get_properties(name)
 
-    with left:
-        st.image(
-            molecule_image(mol),
-            caption=f"2D structure of {name}",
-            use_container_width=True
+    if props is not None:
+
+        st.dataframe(
+            pd.DataFrame(
+                {
+                    "Property": list(props.keys()),
+                    "Value": [str(v) for v in props.values()],
+                }
+            ),
+            width="stretch",
+            hide_index=True,
         )
 
-    with right:
-        st.markdown(f"**Formula:** {props['Molecular Formula']}")
-        st.markdown(
-            f"**Molecular weight:** "
-            f"{props['Molecular Weight (g/mol)']} g/mol"
-        )
-        st.markdown(f"**LogP:** {props['LogP']}")
-        st.markdown(f"**TPSA:** {props['TPSA (Å²)']} Å²")
+        pdf_data = create_pdf(name)
 
-        st.write(MOLECULES[name]["description"])
-
-    st.divider()
-
-    st.subheader("Download Your Individual PDF")
-
-    st.write(
-        f"Your report will include the introduction, molecular structure, "
-        f"SMILES notation, calculated properties, chemical analysis, "
-        f"applications, conclusion, and references for {name}."
-    )
-
-    if st.button("Generate PDF Report", type="primary"):
-
-        try:
-            pdf_data = make_pdf(
-                name,
-                student_name,
-                registration
-            )
+        if pdf_data:
 
             st.download_button(
-                label=f"Download {name} Molecular Report",
+                label="Download PDF Report",
                 data=pdf_data,
-                file_name=f"{name}_Molecular_Report.pdf",
+                file_name=f"{name.lower()}_molecular_report.pdf",
                 mime="application/pdf",
-                key=f"download_{name}"
             )
 
-            st.success(
-                f"Your individual {name} report has been generated."
-            )
-
-        except Exception as error:
-            st.error(
-                "The PDF could not be generated. Please try again."
-            )
-            st.exception(error)
+    st.caption(
+        "Reports are generated for educational purposes. "
+        "Computed properties do not establish medical safety, "
+        "clinical effectiveness, or biological activity."
+    )
 
 
 # --------------------------------------------------
