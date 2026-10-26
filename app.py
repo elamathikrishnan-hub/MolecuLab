@@ -1,7 +1,9 @@
 import streamlit as st
 import pandas as pd
+import streamlit.components.v1 as components
+import py3Dmol
 from rdkit import Chem
-from rdkit.Chem import Descriptors, rdMolDescriptors, Draw
+from rdkit.Chem import AllChem, Descriptors, rdMolDescriptors, Draw
 
 st.set_page_config(
     page_title="MolecuLab",
@@ -28,6 +30,47 @@ MOLECULES = {
 
 def get_molecule(name):
     return Chem.MolFromSmiles(MOLECULES[name]["smiles"])
+
+
+@st.cache_data
+def smiles_to_molblock(smiles):
+    """Build a 3D structure (with hydrogens) and return it as a MolBlock."""
+    mol = Chem.MolFromSmiles(smiles)
+    if mol is None:
+        return None
+    mol = Chem.AddHs(mol)
+    params = AllChem.ETKDGv3()
+    params.randomSeed = 42
+    if AllChem.EmbedMolecule(mol, params) != 0:
+        return None
+    try:
+        AllChem.MMFFOptimizeMolecule(mol, maxIters=500)
+    except Exception:
+        pass
+    return Chem.MolToMolBlock(mol)
+
+
+def show_3d(smiles, key):
+    """Render an interactive 3D viewer for a SMILES string."""
+    style_name = st.selectbox(
+        "3D style", ["Ball and stick", "Stick", "Sphere"], key=key
+    )
+    styles = {
+        "Ball and stick": {"stick": {"radius": 0.15}, "sphere": {"scale": 0.3}},
+        "Stick": {"stick": {}},
+        "Sphere": {"sphere": {}},
+    }
+    molblock = smiles_to_molblock(smiles)
+    if molblock is None:
+        st.error("Could not generate a 3D structure for this molecule.")
+        return
+    view = py3Dmol.view(width=600, height=420)
+    view.addModel(molblock, "mol")
+    view.setStyle({}, styles[style_name])
+    view.setBackgroundColor("white")
+    view.zoomTo()
+    components.html(view._make_html(), height=440)
+    st.caption("Drag to rotate. Pinch or scroll to zoom.")
 
 
 def count_all_atoms(mol):
@@ -138,13 +181,12 @@ elif page == "Molecular Visualization":
         st.write("**SMILES notation:**", MOLECULES[name]["smiles"])
         st.write("**Molecular formula:**", rdMolDescriptors.CalcMolFormula(mol))
 
-        image = Draw.MolToImage(mol, size=(600, 400))
-        st.image(image, caption=f"2D structure of {name}")
-
-        st.caption(
-            "This version displays 2D structures. Interactive 3D visualization "
-            "can be added in a later step."
-        )
+        view_mode = st.radio("View mode", ["2D", "3D"], horizontal=True)
+        if view_mode == "2D":
+            image = Draw.MolToImage(mol, size=(600, 400))
+            st.image(image, caption=f"2D structure of {name}")
+        else:
+            show_3d(MOLECULES[name]["smiles"], key="style_lib")
 
         st.subheader("Structure information")
         st.write("Heavy atoms:", mol.GetNumHeavyAtoms())
@@ -156,18 +198,26 @@ elif page == "Molecular Visualization":
     if st.button("Validate SMILES"):
         user_smiles = user_smiles.strip()
         if not user_smiles:
+            st.session_state.pop("custom_smiles", None)
             st.warning("Please enter a SMILES string first.")
+        elif Chem.MolFromSmiles(user_smiles) is None:
+            st.session_state.pop("custom_smiles", None)
+            st.error("Invalid SMILES notation. Please check your input.")
         else:
-            custom_mol = Chem.MolFromSmiles(user_smiles)
-            if custom_mol is not None:
-                st.success("Valid SMILES notation.")
-                st.image(Draw.MolToImage(custom_mol, size=(500, 350)))
-                st.write(
-                    "Molecular formula:",
-                    rdMolDescriptors.CalcMolFormula(custom_mol)
-                )
-            else:
-                st.error("Invalid SMILES notation. Please check your input.")
+            st.session_state["custom_smiles"] = user_smiles
+
+    # Kept in session_state so the 3D style menu works after validation
+    if "custom_smiles" in st.session_state:
+        custom_smiles = st.session_state["custom_smiles"]
+        custom_mol = Chem.MolFromSmiles(custom_smiles)
+        st.success("Valid SMILES notation.")
+        st.image(Draw.MolToImage(custom_mol, size=(500, 350)))
+        st.write(
+            "Molecular formula:",
+            rdMolDescriptors.CalcMolFormula(custom_mol)
+        )
+        st.subheader("3D structure")
+        show_3d(custom_smiles, key="style_custom")
 
 elif page == "Molecular Properties Report":
     st.title("Molecular Properties Report")
