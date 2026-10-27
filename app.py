@@ -119,6 +119,23 @@ st.markdown(
 
 
 # --------------------------------------------------
+# DEVELOPER DETAILS  (edit the values below)
+# --------------------------------------------------
+
+DEVELOPER = {
+    "name": "Your Name",
+    "registration": "Your Registration Number",
+    "role": "Student Developer",
+    "department": "Your Department",
+    "institution": "Your Institution",
+    "email": "your.email@example.com",
+    "github": "https://github.com/elamathikrishnan-hub/MolecuLab",
+    "linkedin": "",
+    "guide": "",
+}
+
+
+# --------------------------------------------------
 # MOLECULE DATABASE
 # --------------------------------------------------
 
@@ -447,6 +464,18 @@ def create_pdf(info):
 
     story.append(
         Paragraph(
+            "Prepared by: " + escape(DEVELOPER["name"])
+            + (
+                " (" + escape(DEVELOPER["registration"]) + ")"
+                if DEVELOPER["registration"] else ""
+            ),
+            styles["Normal"],
+        )
+    )
+    story.append(Spacer(1, 10))
+
+    story.append(
+        Paragraph(
             "This report was generated using MolecuLab and RDKit. "
             "Calculated descriptors are computational estimates and "
             "do not replace experimental measurements.",
@@ -480,6 +509,7 @@ page = st.sidebar.selectbox(
         "Compare Molecules",
         "Chemistry Quiz",
         "Individual PDF Reports",
+        "About Developer",
     ],
     key="main_navigation",
 )
@@ -490,6 +520,7 @@ st.sidebar.markdown("### Project Information")
 st.sidebar.write("**Domain:** Cheminformatics")
 st.sidebar.write("**Toolkit:** RDKit")
 st.sidebar.write("**Interface:** Streamlit")
+st.sidebar.write("**Developed by:**", DEVELOPER["name"])
 
 st.sidebar.caption(
     "An educational project for exploring molecular structures "
@@ -1042,11 +1073,77 @@ elif page == "Individual PDF Reports":
 
 
 # --------------------------------------------------
+# ABOUT DEVELOPER
+# --------------------------------------------------
+
+elif page == "About Developer":
+
+    st.title("About the Developer")
+
+    col1, col2 = st.columns([1, 1])
+
+    with col1:
+        st.subheader("Developer details")
+
+        rows = [
+            ("Name", DEVELOPER["Elamathi K"]),
+            ("Registration number", DEVELOPER["RA2611026050058"]),
+            ("Role", DEVELOPER["Student"]),
+            ("Department", DEVELOPER["CSE AIML"]),
+            ("Institution", DEVELOPER["SRM Institute Of Science And Technology"]),
+            
+        ]
+
+        for label, value in rows:
+            if value:
+                st.write(f"**{label}:** {value}")
+
+        if DEVELOPER["email"]:
+            st.write(f"**Email:** {DEVELOPER['elamathikrishnan7@gmail.com']}")
+        if DEVELOPER["github"]:
+            st.markdown(f"**GitHub:** [{DEVELOPER['github']}]({DEVELOPER['']})")
+        if DEVELOPER["linkedin"]:
+            st.markdown(
+                f"**LinkedIn:** [{DEVELOPER['linkedin']}]({DEVELOPER['linkedin']})"
+            )
+
+    with col2:
+        st.subheader("About the project")
+
+        st.write(
+            "MolecuLab is an educational cheminformatics web application. "
+            "It lets users explore any molecule in 2D and 3D, calculate "
+            "molecular descriptors, compare molecules, take a short quiz, "
+            "and download PDF reports."
+        )
+
+        st.markdown("**Technologies used**")
+        st.write(
+            "- Python\n"
+            "- Streamlit (web interface)\n"
+            "- RDKit (molecular structures and descriptors)\n"
+            "- py3Dmol (interactive 3D viewer)\n"
+            "- PubChem (molecule name search)\n"
+            "- ReportLab (PDF reports)\n"
+            "- pandas and matplotlib (tables and charts)"
+        )
+
+    st.divider()
+
+    st.caption(
+        "Descriptors are computational estimates for learning and "
+        "comparison. They do not establish safety, effectiveness, or "
+        "biological activity. Molecule name search uses data from PubChem."
+    )
+
+
+# --------------------------------------------------
 # FOOTER
 # --------------------------------------------------
 
 st.divider()
 
 st.caption(
-    "MolecuLab | Interactive Cheminformatics Virtual Laboratory"
+    "MolecuLab | Interactive Cheminformatics Virtual Laboratory | "
+    f"Developed by {DEVELOPER['name']}"
 )
