@@ -2,5 +2,5 @@ streamlit
 pandas
 matplotlib
 rdkit
-py3Dmol
 reportlab
+py3Dmol
