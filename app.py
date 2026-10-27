@@ -1101,8 +1101,8 @@ elif page == "About Developer":
         if DEVELOPER["email"]:
             st.write(f"**Email:** {DEVELOPER['elamathikrishnan7@gmail.com']}")
         if DEVELOPER["github"]:
-            st.markdown(f"**GitHub:** [{DEVELOPER['github']}]({DEVELOPER['']})")
-        if DEVELOPER["linkedin"]:
+            st.markdown(f"**GitHub:** [{DEVELOPER['github']}]({DEVELOPER['https://github.com/elamathikrishnan-hub']})")
+        if DEVELOPER["https://www.linkedin.com/in/elamathi-krishnan-6a95b3423?utm_source=share_via&utm_content=profile&utm_medium=member_android"]:
             st.markdown(
                 f"**LinkedIn:** [{DEVELOPER['linkedin']}]({DEVELOPER['linkedin']})"
             )
@@ -1145,5 +1145,5 @@ st.divider()
 
 st.caption(
     "MolecuLab | Interactive Cheminformatics Virtual Laboratory | "
-    f"Developed by {DEVELOPER['name']}"
+    f"Developed by {DEVELOPER['Elamathi K']}"
 )
