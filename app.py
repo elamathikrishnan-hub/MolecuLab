@@ -1,3 +1,8 @@
+import re
+from urllib.parse import quote
+from xml.sax.saxutils import escape
+
+import requests
 import streamlit as st
 import streamlit.components.v1 as components
 import pandas as pd
@@ -152,11 +157,137 @@ MOLECULES = {
 # MOLECULE FUNCTIONS
 # --------------------------------------------------
 
-def get_molecule(name):
-    """Create an RDKit molecule from the stored SMILES."""
-    smiles = MOLECULES[name]["smiles"]
-    mol = Chem.MolFromSmiles(smiles)
-    return mol
+def safe_name(name):
+    """Make a string safe to use inside a file name."""
+    return re.sub(r"[^A-Za-z0-9_-]+", "_", name.lower()).strip("_") or "molecule"
+
+
+@st.cache_data(ttl=86400, show_spinner="Searching PubChem...")
+def lookup_pubchem(name):
+    """Find a molecule by name in PubChem. Returns None if not found.
+
+    Network errors are raised, so they are not cached.
+    """
+    url = (
+        "https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/name/"
+        f"{quote(name, safe='')}/property/"
+        "IsomericSMILES,IUPACName,MolecularFormula/JSON"
+    )
+    response = requests.get(url, timeout=10)
+
+    if response.status_code == 404:
+        return None
+
+    response.raise_for_status()
+    props = response.json()["PropertyTable"]["Properties"][0]
+
+    smiles = (
+        props.get("SMILES")
+        or props.get("IsomericSMILES")
+        or props.get("ConnectivitySMILES")
+        or props.get("CanonicalSMILES")
+    )
+
+    if not smiles:
+        return None
+
+    return {
+        "smiles": smiles,
+        "iupac": props.get("IUPACName", ""),
+        "formula": props.get("MolecularFormula", ""),
+    }
+
+
+def select_molecule(label, key, default_index=0):
+    """Let the user pick a built-in molecule, search by name, or enter SMILES.
+
+    Returns a dict with name, smiles, description and category,
+    or None if no valid molecule is selected yet.
+    """
+    source = st.radio(
+        f"{label}: choose how to select",
+        ["Built-in", "Search by name", "Enter SMILES"],
+        horizontal=True,
+        key=f"{key}_source",
+    )
+
+    if source == "Built-in":
+        name = st.selectbox(
+            label,
+            list(MOLECULES.keys()),
+            index=default_index,
+            key=f"{key}_builtin",
+        )
+        data = MOLECULES[name]
+        return {
+            "name": name,
+            "smiles": data["smiles"],
+            "description": data["description"],
+            "category": data["category"],
+        }
+
+    if source == "Search by name":
+        query = st.text_input(
+            "Molecule name",
+            placeholder="e.g. aspirin, caffeine, glucose",
+            key=f"{key}_query",
+        ).strip()
+
+        if not query:
+            st.info("Type a molecule name and press Enter.")
+            return None
+
+        try:
+            found = lookup_pubchem(query)
+        except Exception:
+            st.error(
+                "Could not reach PubChem. Check your connection and try "
+                "again, or use 'Enter SMILES'."
+            )
+            return None
+
+        if found is None:
+            st.warning(
+                f"No molecule named '{query}' was found. Check the "
+                "spelling or use 'Enter SMILES'."
+            )
+            return None
+
+        if Chem.MolFromSmiles(found["smiles"]) is None:
+            st.error("RDKit could not read the structure returned by PubChem.")
+            return None
+
+        description = "Molecule retrieved from the PubChem database."
+        if found["iupac"]:
+            description += f" IUPAC name: {found['iupac']}."
+
+        return {
+            "name": query[:1].upper() + query[1:],
+            "smiles": found["smiles"],
+            "description": description,
+            "category": "PubChem search",
+        }
+
+    text = st.text_input(
+        "SMILES notation",
+        placeholder="e.g. CC(=O)OC1=CC=CC=C1C(=O)O",
+        key=f"{key}_smiles",
+    ).strip()
+
+    if not text:
+        st.info("Type a SMILES string and press Enter.")
+        return None
+
+    if Chem.MolFromSmiles(text) is None:
+        st.error("Invalid SMILES notation. Please check your input.")
+        return None
+
+    return {
+        "name": "Custom molecule",
+        "smiles": text,
+        "description": "Molecule entered by the user as a SMILES string.",
+        "category": "Custom SMILES",
+    }
 
 
 @st.cache_data
@@ -164,7 +295,7 @@ def smiles_to_molblock(smiles):
     """Build a 3D structure (with hydrogens) and return it as a MolBlock."""
     mol = Chem.MolFromSmiles(smiles)
 
-    if mol is None:
+    if mol is None or mol.GetNumHeavyAtoms() > 100:
         return None
 
     mol = Chem.AddHs(mol)
@@ -203,7 +334,10 @@ def show_3d(smiles, key):
     molblock = smiles_to_molblock(smiles)
 
     if molblock is None:
-        st.error("Could not generate a 3D structure for this molecule.")
+        st.error(
+            "Could not generate a 3D structure for this molecule. "
+            "Very large molecules (over 100 heavy atoms) are not supported."
+        )
         return
 
     view = py3Dmol.view(width=500, height=400)
@@ -216,9 +350,10 @@ def show_3d(smiles, key):
     st.caption("Drag to rotate. Pinch or scroll to zoom.")
 
 
-def get_properties(name):
+@st.cache_data
+def get_properties(name, smiles):
     """Calculate molecular descriptors using RDKit."""
-    mol = get_molecule(name)
+    mol = Chem.MolFromSmiles(smiles)
 
     if mol is None:
         return None
@@ -226,22 +361,19 @@ def get_properties(name):
     return {
         "Molecule": name,
         "Molecular Formula": rdMolDescriptors.CalcMolFormula(mol),
-        "Molecular Weight (g/mol)": round(
-            Descriptors.MolWt(mol), 2
-        ),
+        "Molecular Weight (g/mol)": round(Descriptors.MolWt(mol), 2),
         "LogP": round(Descriptors.MolLogP(mol), 2),
-        "TPSA (Å²)": round(
-            rdMolDescriptors.CalcTPSA(mol), 2
-        ),
+        "TPSA (Å²)": round(rdMolDescriptors.CalcTPSA(mol), 2),
         "H-Bond Donors": rdMolDescriptors.CalcNumHBD(mol),
         "H-Bond Acceptors": rdMolDescriptors.CalcNumHBA(mol),
         "Rotatable Bonds": rdMolDescriptors.CalcNumRotatableBonds(mol),
     }
 
 
-def create_pdf(name):
-    """Generate a downloadable PDF report."""
-    props = get_properties(name)
+def create_pdf(info):
+    """Generate a downloadable PDF report for any molecule."""
+    name = info["name"]
+    props = get_properties(name, info["smiles"])
 
     if props is None:
         return None
@@ -260,32 +392,19 @@ def create_pdf(name):
     story = []
 
     story.append(
-        Paragraph(
-            "MolecuLab - Molecular Properties Report",
-            styles["Title"],
-        )
+        Paragraph("MolecuLab - Molecular Properties Report", styles["Title"])
     )
     story.append(Spacer(1, 12))
 
     story.append(
-        Paragraph(
-            f"<b>Molecule:</b> {name}",
-            styles["Normal"],
-        )
+        Paragraph(f"<b>Molecule:</b> {escape(name)}", styles["Normal"])
     )
     story.append(Spacer(1, 8))
 
-    story.append(
-        Paragraph(
-            MOLECULES[name]["description"],
-            styles["BodyText"],
-        )
-    )
+    story.append(Paragraph(escape(info["description"]), styles["BodyText"]))
     story.append(Spacer(1, 16))
 
-    story.append(
-        Paragraph("Molecular Properties", styles["Heading2"])
-    )
+    story.append(Paragraph("Molecular Properties", styles["Heading2"]))
     story.append(Spacer(1, 8))
 
     table_data = [["Property", "Calculated Value"]]
@@ -312,12 +431,17 @@ def create_pdf(name):
     story.append(table)
     story.append(Spacer(1, 16))
 
-    story.append(
-        Paragraph("SMILES Representation", styles["Heading2"])
-    )
+    mol = Chem.MolFromSmiles(info["smiles"])
+
+    story.append(Paragraph("SMILES Representation", styles["Heading2"]))
+    story.append(Spacer(1, 6))
+    story.append(Paragraph(escape(info["smiles"]), styles["Code"]))
     story.append(Spacer(1, 6))
     story.append(
-        Paragraph(MOLECULES[name]["smiles"], styles["Code"])
+        Paragraph(
+            "Canonical SMILES: " + escape(Chem.MolToSmiles(mol)),
+            styles["Code"],
+        )
     )
     story.append(Spacer(1, 16))
 
@@ -412,8 +536,8 @@ if page == "Home":
             <div class="info-card">
                 <h3>Molecular Explorer</h3>
                 <p>
-                    View 2D and interactive 3D molecular structures
-                    and examine their SMILES representations.
+                    View 2D and interactive 3D structures of any molecule.
+                    Search by name or enter your own SMILES.
                 </p>
             </div>
             """,
@@ -448,7 +572,7 @@ if page == "Home":
             unsafe_allow_html=True,
         )
 
-    st.subheader("Molecules in the Laboratory")
+    st.subheader("Built-in Example Molecules")
 
     cols = st.columns(3)
 
@@ -544,14 +668,16 @@ elif page == "Molecular Explorer":
 
     st.title("Molecular Explorer")
 
-    name = st.selectbox(
-        "Select a molecule",
-        list(MOLECULES.keys()),
+    st.write(
+        "Choose a built-in molecule, search any molecule by name, "
+        "or enter your own SMILES."
     )
 
-    mol = get_molecule(name)
+    info = select_molecule("Molecule", key="explorer")
 
-    if mol is not None:
+    if info is not None:
+
+        mol = Chem.MolFromSmiles(info["smiles"])
 
         col1, col2 = st.columns([1, 1])
 
@@ -565,39 +691,35 @@ elif page == "Molecular Explorer":
             if view_mode == "2D":
                 st.subheader("2D Molecular Structure")
 
-                image = Draw.MolToImage(
-                    mol,
-                    size=(500, 400),
-                )
-
+                image = Draw.MolToImage(mol, size=(500, 400))
                 st.image(image, width="stretch")
 
             else:
                 st.subheader("3D Molecular Structure")
-                show_3d(MOLECULES[name]["smiles"], key="style_explorer")
+                show_3d(info["smiles"], key="style_explorer")
 
         with col2:
             st.subheader("Molecule Information")
 
-            st.write("**Name:**", name)
-            st.write("**Category:**", MOLECULES[name]["category"])
+            st.write("**Name:**", info["name"])
+            st.write("**Category:**", info["category"])
             st.write("**Formula:**", rdMolDescriptors.CalcMolFormula(mol))
 
             st.write("**Description:**")
-            st.write(MOLECULES[name]["description"])
+            st.write(info["description"])
 
             st.write("**SMILES Representation:**")
-            st.code(MOLECULES[name]["smiles"])
+            st.code(info["smiles"])
+
+            st.write("**Canonical SMILES (RDKit):**")
+            st.code(Chem.MolToSmiles(mol))
 
             st.download_button(
                 "Download SMILES",
-                data=MOLECULES[name]["smiles"],
-                file_name=f"{name.lower()}_smiles.txt",
+                data=info["smiles"],
+                file_name=f"{safe_name(info['name'])}_smiles.txt",
                 mime="text/plain",
             )
-
-    else:
-        st.error("The molecular structure could not be generated.")
 
 
 # --------------------------------------------------
@@ -608,16 +730,13 @@ elif page == "Properties Dashboard":
 
     st.title("Molecular Properties Dashboard")
 
-    name = st.selectbox(
-        "Choose a molecule",
-        list(MOLECULES.keys()),
-    )
+    info = select_molecule("Molecule", key="dashboard")
 
-    props = get_properties(name)
+    if info is not None:
 
-    if props is not None:
+        props = get_properties(info["name"], info["smiles"])
 
-        st.subheader(name)
+        st.subheader(info["name"])
 
         col1, col2, col3 = st.columns(3)
 
@@ -625,33 +744,14 @@ elif page == "Properties Dashboard":
             "Molecular Weight",
             f"{props['Molecular Weight (g/mol)']} g/mol",
         )
-
-        col2.metric(
-            "LogP",
-            props["LogP"],
-        )
-
-        col3.metric(
-            "TPSA",
-            f"{props['TPSA (Å²)']} Å²",
-        )
+        col2.metric("LogP", props["LogP"])
+        col3.metric("TPSA", f"{props['TPSA (Å²)']} Å²")
 
         col4, col5, col6 = st.columns(3)
 
-        col4.metric(
-            "H-Bond Donors",
-            props["H-Bond Donors"],
-        )
-
-        col5.metric(
-            "H-Bond Acceptors",
-            props["H-Bond Acceptors"],
-        )
-
-        col6.metric(
-            "Rotatable Bonds",
-            props["Rotatable Bonds"],
-        )
+        col4.metric("H-Bond Donors", props["H-Bond Donors"])
+        col5.metric("H-Bond Acceptors", props["H-Bond Acceptors"])
+        col6.metric("Rotatable Bonds", props["Rotatable Bonds"])
 
         st.subheader("Complete Property Table")
 
@@ -662,11 +762,7 @@ elif page == "Properties Dashboard":
             }
         )
 
-        st.dataframe(
-            property_df,
-            width="stretch",
-            hide_index=True,
-        )
+        st.dataframe(property_df, width="stretch", hide_index=True)
 
         st.caption(
             "Values are calculated using RDKit. Different software "
@@ -684,49 +780,42 @@ elif page == "Compare Molecules":
     st.title("Compare Molecules")
 
     st.write(
-        "Select two molecules to compare their calculated "
-        "chemical descriptors."
+        "Select two molecules (built-in, searched by name, or entered "
+        "as SMILES) to compare their calculated descriptors."
     )
 
     col1, col2 = st.columns(2)
 
     with col1:
-        molecule_a = st.selectbox(
-            "First molecule",
-            list(MOLECULES.keys()),
-            index=0,
-        )
+        info_a = select_molecule("First molecule", key="cmp_a", default_index=0)
 
     with col2:
-        molecule_b = st.selectbox(
-            "Second molecule",
-            list(MOLECULES.keys()),
-            index=1,
-        )
+        info_b = select_molecule("Second molecule", key="cmp_b", default_index=1)
 
-    props_a = get_properties(molecule_a)
-    props_b = get_properties(molecule_b)
+    if info_a is not None and info_b is not None:
 
-    if props_a is not None and props_b is not None:
+        props_a = get_properties(info_a["name"], info_a["smiles"])
+        props_b = get_properties(info_b["name"], info_b["smiles"])
 
-        comparison = pd.DataFrame(
-            [props_a, props_b]
-        )
+        label_a = info_a["name"]
+        label_b = info_b["name"]
+
+        if label_a == label_b:
+            label_a, label_b = f"{label_a} (1)", f"{label_b} (2)"
+
+        comparison = pd.DataFrame([props_a, props_b])
+        comparison["Molecule"] = [label_a, label_b]
 
         st.subheader("Comparison Table")
 
-        st.dataframe(
-            comparison,
-            width="stretch",
-            hide_index=True,
-        )
+        st.dataframe(comparison, width="stretch", hide_index=True)
 
         st.subheader("Molecular Weight Comparison")
 
         fig, ax = plt.subplots(figsize=(8, 4))
 
         ax.bar(
-            [molecule_a, molecule_b],
+            [label_a, label_b],
             [
                 props_a["Molecular Weight (g/mol)"],
                 props_b["Molecular Weight (g/mol)"],
@@ -743,13 +832,7 @@ elif page == "Compare Molecules":
 
         fig, ax = plt.subplots(figsize=(8, 4))
 
-        ax.bar(
-            [molecule_a, molecule_b],
-            [
-                props_a["LogP"],
-                props_b["LogP"],
-            ],
-        )
+        ax.bar([label_a, label_b], [props_a["LogP"], props_b["LogP"]])
 
         ax.set_ylabel("LogP")
         ax.set_title("Calculated LogP Comparison")
@@ -764,7 +847,7 @@ elif page == "Compare Molecules":
             mime="text/csv",
         )
 
-        if molecule_a == molecule_b:
+        if info_a["smiles"] == info_b["smiles"]:
             st.info(
                 "Both selections refer to the same molecule. "
                 "Choose different molecules for a more useful comparison."
@@ -914,23 +997,20 @@ elif page == "Individual PDF Reports":
 
     st.write(
         "Generate a PDF report containing calculated descriptors "
-        "and the SMILES representation of a selected molecule."
+        "and the SMILES representation of any molecule."
     )
 
-    name = st.selectbox(
-        "Select a molecule for the report",
-        list(MOLECULES.keys()),
-    )
+    info = select_molecule("Molecule for the report", key="pdf")
 
-    st.subheader("Report Preview")
+    if info is not None:
 
-    st.write("**Molecule:**", name)
-    st.write("**Formula:**", MOLECULES[name]["formula"])
-    st.write("**Category:**", MOLECULES[name]["category"])
+        props = get_properties(info["name"], info["smiles"])
 
-    props = get_properties(name)
+        st.subheader("Report Preview")
 
-    if props is not None:
+        st.write("**Molecule:**", info["name"])
+        st.write("**Formula:**", props["Molecular Formula"])
+        st.write("**Category:**", info["category"])
 
         st.dataframe(
             pd.DataFrame(
@@ -943,14 +1023,14 @@ elif page == "Individual PDF Reports":
             hide_index=True,
         )
 
-        pdf_data = create_pdf(name)
+        pdf_data = create_pdf(info)
 
         if pdf_data:
 
             st.download_button(
                 label="Download PDF Report",
                 data=pdf_data,
-                file_name=f"{name.lower()}_molecular_report.pdf",
+                file_name=f"{safe_name(info['name'])}_molecular_report.pdf",
                 mime="application/pdf",
             )
 
