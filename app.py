@@ -123,14 +123,14 @@ st.markdown(
 # --------------------------------------------------
 
 DEVELOPER = {
-    "name": "Your Name",
-    "registration": "Your Registration Number",
-    "role": "Student Developer",
-    "department": "Your Department",
-    "institution": "Your Institution",
-    "email": "your.email@example.com",
-    "github": "https://github.com/elamathikrishnan-hub/MolecuLab",
-    "linkedin": "",
+    "name": "Elamathi K",
+    "registration": "RA2611026050058",
+    "role": "Student",
+    "department": "CSE AIML",
+    "institution": "SRM Institute of Science and Technology",
+    "email": "elamathikrishnan7@gmail.com",
+    "github": "https://github.com/elamathikrishnan-hub",
+    "linkedin": "https://www.linkedin.com/in/elamathi-krishnan-6a95b3423",
     "guide": "",
 }
 
@@ -1086,12 +1086,12 @@ elif page == "About Developer":
         st.subheader("Developer details")
 
         rows = [
-            ("Name", DEVELOPER["Elamathi K"]),
-            ("Registration number", DEVELOPER["RA2611026050058"]),
-            ("Role", DEVELOPER["Student"]),
-            ("Department", DEVELOPER["CSE AIML"]),
-            ("Institution", DEVELOPER["SRM Institute Of Science And Technology"]),
-            
+            ("Name", DEVELOPER["name"]),
+            ("Registration number", DEVELOPER["registration"]),
+            ("Role", DEVELOPER["role"]),
+            ("Department", DEVELOPER["department"]),
+            ("Institution", DEVELOPER["institution"]),
+            ("Project guide", DEVELOPER["guide"]),
         ]
 
         for label, value in rows:
@@ -1099,10 +1099,10 @@ elif page == "About Developer":
                 st.write(f"**{label}:** {value}")
 
         if DEVELOPER["email"]:
-            st.write(f"**Email:** {DEVELOPER['elamathikrishnan7@gmail.com']}")
+            st.write(f"**Email:** {DEVELOPER['email']}")
         if DEVELOPER["github"]:
-            st.markdown(f"**GitHub:** [{DEVELOPER['github']}]({DEVELOPER['https://github.com/elamathikrishnan-hub']})")
-        if DEVELOPER["https://www.linkedin.com/in/elamathi-krishnan-6a95b3423?utm_source=share_via&utm_content=profile&utm_medium=member_android"]:
+            st.markdown(f"**GitHub:** [{DEVELOPER['github']}]({DEVELOPER['github']})")
+        if DEVELOPER["linkedin"]:
             st.markdown(
                 f"**LinkedIn:** [{DEVELOPER['linkedin']}]({DEVELOPER['linkedin']})"
             )
@@ -1145,5 +1145,5 @@ st.divider()
 
 st.caption(
     "MolecuLab | Interactive Cheminformatics Virtual Laboratory | "
-    f"Developed by {DEVELOPER['Elamathi K']}"
+    f"Developed by {DEVELOPER['name']}"
 )
